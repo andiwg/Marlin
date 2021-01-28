@@ -74,7 +74,6 @@ void MeatPack::reset_state() {
   second_char = 0;
   cmd_count = full_char_count = char_out_count = 0;
   TERN_(MP_DEBUG, chars_decoded = 0);
-  report_state();
 }
 
 /**
@@ -89,7 +88,7 @@ uint8_t MeatPack::unpack_chars(const uint8_t pk, uint8_t* __restrict const chars
     out = kFirstCharIsLiteral;
   else {
     const uint8_t chr = pk & 0x0F;
-    chars_out[0] = meatPackLookupTable[(uint8_t)chr]; // Set the first char
+    chars_out[0] = meatPackLookupTable[chr]; // Set the first char
   }
 
   // Check if upper nybble is 1111... if so, we don't need the second char.
@@ -97,7 +96,7 @@ uint8_t MeatPack::unpack_chars(const uint8_t pk, uint8_t* __restrict const chars
     out |= kSecondCharIsLiteral;
   else {
     const uint8_t chr = (pk >> 4) & 0x0F;
-    chars_out[1] = meatPackLookupTable[(uint8_t)chr]; // Set the second char
+    chars_out[1] = meatPackLookupTable[chr]; // Set the second char
   }
 
   return out;
@@ -161,18 +160,17 @@ void MeatPack::handle_output_char(const uint8_t c) {
  */
 void MeatPack::handle_command(const MeatPack_Command c) {
   switch (c) {
+    case MPCommand_QueryConfig:     break;
     case MPCommand_EnablePacking:   SBI(state, MPConfig_Bit_Active);   DEBUG_ECHOLNPGM("[MPDBG] ENA REC");   break;
     case MPCommand_DisablePacking:  CBI(state, MPConfig_Bit_Active);   DEBUG_ECHOLNPGM("[MPDBG] DIS REC");   break;
-    case MPCommand_TogglePacking:   TBI(state, MPConfig_Bit_Active);   DEBUG_ECHOLNPGM("[MPDBG] TGL REC");   break;
     case MPCommand_ResetAll:        reset_state();                     DEBUG_ECHOLNPGM("[MPDBG] RESET REC"); break;
-    case MPCommand_EnableNoSpaces: { SBI(state, MPConfig_Bit_NoSpaces); DEBUG_ECHOLNPGM("[MPDBG] ENA NSP");
-      meatPackLookupTable[kSpaceCharIdx] = kSpaceCharReplace;
-    }break;
-    case MPCommand_DisableNoSpaces: { CBI(state, MPConfig_Bit_NoSpaces); DEBUG_ECHOLNPGM("[MPDBG] DIS NSP");
-      meatPackLookupTable[kSpaceCharIdx] = ' ';
-    }break;
-    default: DEBUG_ECHOLNPGM("[MPDBG] UNK CMD REC");
-    case MPCommand_QueryConfig: break;
+    case MPCommand_EnableNoSpaces:
+      SBI(state, MPConfig_Bit_NoSpaces);
+      meatPackLookupTable[kSpaceCharIdx] = kSpaceCharReplace;          DEBUG_ECHOLNPGM("[MPDBG] ENA NSP");   break;
+    case MPCommand_DisableNoSpaces:
+      CBI(state, MPConfig_Bit_NoSpaces);
+      meatPackLookupTable[kSpaceCharIdx] = ' ';                        DEBUG_ECHOLNPGM("[MPDBG] DIS NSP");   break;
+    default:                                                           DEBUG_ECHOLNPGM("[MPDBG] UNK CMD REC");
   }
   report_state();
 }
@@ -181,19 +179,16 @@ void MeatPack::report_state() {
   // NOTE: if any configuration vars are added below, the outgoing sync text for host plugin
   // should not contain the "PV' substring, as this is used to indicate protocol version
   SERIAL_ECHOPGM("[MP] ");
-  SERIAL_ECHOPGM(MeatPack_ProtocolVersion);
-  SERIAL_CHAR(' ');
+  SERIAL_ECHOPGM(MeatPack_ProtocolVersion " ");
   serialprint_onoff(TEST(state, MPConfig_Bit_Active));
-  SERIAL_CHAR(' ');
-  serialprintPGM(TEST(state, MPConfig_Bit_NoSpaces) ? PSTR("NSP") : PSTR("ESP"));
-  SERIAL_EOL();
+  serialprintPGM(TEST(state, MPConfig_Bit_NoSpaces) ? PSTR(" NSP\n") : PSTR(" ESP\n"));
 }
 
 /**
  * Interpret a single character received from serial
  * according to the current meatpack state.
  */
-void MeatPack::handle_rx_char(const uint8_t c) {
+void MeatPack::handle_rx_char(const uint8_t c, const serial_index_t serial_ind) {
   if (c == kCommandByte) {                // A command (0xFF) byte?
     if (cmd_count) {                      // In fact, two in a row?
       cmd_is_next = true;                 // Then a MeatPack command follows
@@ -205,6 +200,7 @@ void MeatPack::handle_rx_char(const uint8_t c) {
   }
 
   if (cmd_is_next) {                      // Were two command bytes received?
+    PORT_REDIRECT(serial_ind);
     handle_command((MeatPack_Command)c);  // Then the byte is a MeatPack command
     cmd_is_next = false;
     return;
